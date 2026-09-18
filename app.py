@@ -1,4 +1,4 @@
-
+App · PY
 import streamlit as st
 import pandas as pd
 import json
@@ -688,8 +688,11 @@ elif role == "Manager":
                     e_name = emp_row['name']
                     e_rate = safe_float(emp_row['hourly_rate'])
                     
-                    emp_filtered_p = filtered_punches_exp[filtered_punches_exp['emp_id'].astype(str) == e_id]
-                    e_hours = emp_filtered_p['total_hours'].apply(safe_float).sum()
+                    if not filtered_punches_exp.empty and 'emp_id' in filtered_punches_exp.columns:
+                        emp_filtered_p = filtered_punches_exp[filtered_punches_exp['emp_id'].astype(str) == e_id]
+                        e_hours = emp_filtered_p['total_hours'].apply(safe_float).sum()
+                    else:
+                        e_hours = 0.0
                     e_salary = e_hours * e_rate
                     
                     emp_summary_list.append({
@@ -832,6 +835,66 @@ elif role == "Manager":
  
             st.divider()
  
+            st.markdown("#### 📥 Add Past Shift (Backfill)")
+            st.caption("Use this to manually enter shifts that already happened — e.g. from WhatsApp reports — since they won't come through the live Clock In/Out flow.")
+ 
+            emp_df_backfill = get_as_df("employees")
+            if emp_df_backfill.empty or 'name' not in emp_df_backfill.columns:
+                st.info("No employees found.")
+            else:
+                with st.form("add_past_shift_form"):
+                    bf_c1, bf_c2 = st.columns(2)
+                    with bf_c1:
+                        bf_emp_name = st.selectbox("Employee", emp_df_backfill['name'].tolist(), key="bf_emp")
+                        bf_date = st.date_input("Shift Date", value=date.today(), key="bf_date")
+                        bf_shift = st.selectbox("Shift", [
+                            "Morning Shift (06:00 - 14:00)",
+                            "Evening Shift (14:00 - 22:00)",
+                            "Night Shift (22:00 - 06:00)"
+                        ], key="bf_shift")
+                    with bf_c2:
+                        bf_time_in = st.time_input("Clock In Time", value=time(6, 0), key="bf_in")
+                        bf_time_out = st.time_input("Clock Out Time", value=time(14, 0), key="bf_out")
+ 
+                    bf_c3, bf_c4, bf_c5 = st.columns(3)
+                    with bf_c3:
+                        bf_cash_in = st.number_input("Cash In (USD)", min_value=0.0, value=0.0, step=1.0, key="bf_cash_in")
+                    with bf_c4:
+                        bf_cash_out = st.number_input("Cash Out (USD)", min_value=0.0, value=0.0, step=1.0, key="bf_cash_out")
+                    with bf_c5:
+                        bf_bonus = st.number_input("Bonus (USD)", min_value=0.0, value=0.0, step=1.0, key="bf_bonus")
+ 
+                    bf_submit = st.form_submit_button("➕ Add Shift Record", type="primary")
+ 
+                    if bf_submit:
+                        bf_dt_in = datetime.combine(bf_date, bf_time_in)
+                        bf_dt_out = datetime.combine(bf_date, bf_time_out)
+                        if bf_dt_out <= bf_dt_in:
+                            bf_dt_out = bf_dt_out + timedelta(days=1)  # handles overnight shifts like Night Shift
+ 
+                        bf_hours = round((bf_dt_out - bf_dt_in).total_seconds() / 3600.0, 2)
+                        bf_emp_row = emp_df_backfill[emp_df_backfill['name'] == bf_emp_name].iloc[0]
+                        bf_punch_id = f"P_bf_{int(datetime.now().timestamp())}"
+ 
+                        new_row = [
+                            bf_punch_id,
+                            bf_emp_row['emp_id'],
+                            bf_shift,
+                            bf_dt_in.strftime("%Y-%m-%d %H:%M:%S"),
+                            bf_dt_out.strftime("%Y-%m-%d %H:%M:%S"),
+                            bf_hours,
+                            float(bf_cash_in),
+                            float(bf_cash_out),
+                            float(bf_bonus),
+                            "Approved",
+                            "",
+                            "No"
+                        ]
+                        execute_query("time_punches", "insert", data_row=new_row)
+                        st.success(f"Added: {bf_emp_name} — {bf_date} — {bf_hours} hrs")
+                        st.rerun()
+ 
+            st.divider()
             st.markdown("#### 🔢 Change Employee PIN")
             emp_df_settings = get_as_df("employees")
             if emp_df_settings.empty or 'name' not in emp_df_settings.columns:
