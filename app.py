@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import json
@@ -6,9 +7,58 @@ from datetime import datetime, date, time, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 import plotly.express as px
-
+ 
 st.set_page_config(page_title="TPMS", page_icon="⏰", layout="wide")
-
+ 
+st.markdown("""
+<style>
+    /* Overall spacing */
+    .block-container { padding-top: 2rem; padding-bottom: 3rem; }
+ 
+    /* Page title */
+    h1 { font-weight: 700; letter-spacing: -0.5px; }
+ 
+    /* Section headers */
+    h3 { margin-top: 0.5rem; color: #1a1a2e; }
+    h4 { color: #333; font-weight: 600; }
+ 
+    /* Metric cards */
+    div[data-testid="stMetric"] {
+        background: #f8f9fb;
+        border: 1px solid #e6e8ec;
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+    }
+    div[data-testid="stMetricLabel"] { font-weight: 500; color: #6b7280; }
+    div[data-testid="stMetricValue"] { font-weight: 700; color: #1a1a2e; }
+ 
+    /* Buttons */
+    .stButton > button {
+        border-radius: 8px;
+        font-weight: 600;
+    }
+ 
+    /* Tabs */
+    .stTabs [data-baseweb="tab"] {
+        font-weight: 600;
+        padding: 0.5rem 1rem;
+    }
+ 
+    /* Dataframes */
+    div[data-testid="stDataFrame"] {
+        border-radius: 10px;
+        overflow: hidden;
+        border: 1px solid #e6e8ec;
+    }
+ 
+    /* Dividers */
+    hr { margin: 1.25rem 0; }
+ 
+    /* Alerts (success/info/warning/error) */
+    div[data-testid="stAlert"] { border-radius: 10px; }
+</style>
+""", unsafe_allow_html=True)
+ 
 # --- GOOGLE SHEETS CONNECTION SETUP ---
 @st.cache_resource
 def init_google_sheet():
@@ -19,14 +69,22 @@ def init_google_sheet():
         json_files = [f for f in os.listdir('.') if f.endswith('.json') and 'payroll-and-management' in f]
         with open(json_files[0]) as f:
             creds_dict = json.load(f)
-            
+ 
+    # Normalize the private key so it's valid PEM regardless of how it was
+    # stored in secrets.toml (fixes "Could not deserialize key data" errors
+    # caused by escaped \n sequences not being converted to real newlines).
+    pk = creds_dict.get("private_key", "")
+    if "\\n" in pk and "\n" not in pk.replace("\\n", ""):
+        pk = pk.replace("\\n", "\n")
+    creds_dict["private_key"] = pk.strip() + "\n"
+ 
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(creds)
     sheet = client.open("Payroll System Database")
     return sheet
-
+ 
 gsheet = init_google_sheet()
-
+ 
 # --- VERIFY AND INITIALIZE SHEET STRUCTURE (CACHED TO PREVENT 429 ERRORS) ---
 @st.cache_resource
 def verify_sheet_structure():
@@ -55,9 +113,9 @@ def verify_sheet_structure():
                 ws = gsheet.worksheet(tab)
                 if not ws.row_values(1):
                     ws.append_row(headers)
-
+ 
 verify_sheet_structure()
-
+ 
 # --- HELPER FUNCTIONS WITH CACHING ---
 @st.cache_data(ttl=5)
 def get_as_df(worksheet_name):
@@ -67,7 +125,7 @@ def get_as_df(worksheet_name):
         return pd.DataFrame(data)
     except Exception:
         return pd.DataFrame()
-
+ 
 def safe_float(val):
     try:
         if val is None:
@@ -78,7 +136,7 @@ def safe_float(val):
         return float(val_str)
     except:
         return 0.0
-
+ 
 def execute_query(worksheet_name, action, data_row=None, row_id=None, update_dict=None):
     ws = gsheet.worksheet(worksheet_name)
     if action == "insert":
@@ -93,12 +151,39 @@ def execute_query(worksheet_name, action, data_row=None, row_id=None, update_dic
                     col_num = headers.index(k) + 1
                     ws.update_cell(row_num, col_num, v)
     st.cache_data.clear()
-
+ 
+def get_setting(key, default=""):
+    try:
+        ws = gsheet.worksheet("settings")
+        records = ws.get_all_records()
+        for r in records:
+            if str(r.get("key", "")) == key:
+                return str(r.get("value", ""))
+    except Exception:
+        pass
+    return default
+ 
+def set_setting(key, value):
+    ws = gsheet.worksheet("settings")
+    cell = ws.find(key)
+    if cell:
+        ws.update_cell(cell.row, 2, value)
+    else:
+        ws.append_row([key, value])
+    st.cache_data.clear()
+ 
 # --- APP UI ---
 st.title("⏰ TPMS")
-
-role = st.sidebar.selectbox("Select Portal", ["Employee", "Manager"])
-
+ 
+# Only reveal the Manager portal option when accessed via ?role=manager.
+# Employees using the plain link never see that a Manager portal exists.
+manager_link_used = st.query_params.get("role") == "manager"
+ 
+if manager_link_used:
+    role = st.sidebar.selectbox("Select Portal", ["Employee", "Manager"])
+else:
+    role = "Employee"
+ 
 if role == "Employee":
     st.subheader("Employee")
     emp_df = get_as_df("employees")
@@ -109,11 +194,11 @@ if role == "Employee":
         if "emp_logged_in" not in st.session_state:
             st.session_state.emp_logged_in = False
             st.session_state.current_emp = None
-
+ 
         if not st.session_state.emp_logged_in:
             st.markdown("### 🔐 Employee Login")
             selected_name = st.selectbox("Select Your Name", emp_df['name'].tolist())
-            entered_pin = st.text_input("Enter 4-Digit PIN", type="password")
+            entered_pin = st.text_input("Enter 4-Digit PIN", type="password", autocomplete="off")
             
             if st.button("Login", type="primary"):
                 emp_row = emp_df[emp_df['name'] == selected_name].iloc[0]
@@ -137,19 +222,19 @@ if role == "Employee":
                     st.rerun()
             
             st.divider()
-
+ 
             emp_tab1, emp_tab2 = st.tabs(["⏱️ Timeclock", "📊 History"])
-
+ 
             with emp_tab1:
                 punches_df = get_as_df("time_punches")
                 active_punch = None
-
+ 
                 if not punches_df.empty and 'emp_id' in punches_df.columns:
                     emp_punches = punches_df[punches_df['emp_id'].astype(str) == str(emp['emp_id'])]
                     open_punches = emp_punches[emp_punches['clock_out'].isna() | (emp_punches['clock_out'].astype(str).str.strip() == "")]
                     if not open_punches.empty:
                         active_punch = open_punches.iloc[-1]
-
+ 
                 if active_punch is None:
                     st.info("Status: **Currently Clocked Out** ⚪")
                     assigned_shift = emp.get('shift_name', 'Morning Shift (06:00 - 14:00)')
@@ -184,14 +269,14 @@ if role == "Employee":
                                 diff_hours = round((now - t_in).total_seconds() / 3600.0, 2)
                             except Exception:
                                 diff_hours = 0.0
-
+ 
                             execute_query(
                                 "time_punches", "update", row_id=active_punch['punch_id'], 
                                 update_dict={"clock_out": clock_out_str, "total_hours": diff_hours, "cash_in": float(cash_in), "cash_out": float(cash_out), "bonus": float(bonus)}
                             )
                             st.success(f"Clocked out successfully at {clock_out_str}! Total hours: {diff_hours} hrs.")
                             st.rerun()
-
+ 
             with emp_tab2:
                 st.markdown("### 📊 History")
                 punches_df = get_as_df("time_punches")
@@ -222,9 +307,9 @@ if role == "Employee":
                             if diff_mins > 5: return f"Late ({diff_mins} mins late)"
                             elif diff_mins < 0: return f"On Time ({abs(diff_mins)} mins early)"
                             else: return "On Time"
-
+ 
                         emp_history['Punctuality'] = emp_history.apply(calc_punctuality, axis=1)
-
+ 
                         def format_status(val):
                             v = str(val).strip().capitalize()
                             if v == "Approved": return "✔"
@@ -233,7 +318,7 @@ if role == "Employee":
                         
                         if 'approval_status' in emp_history.columns:
                             emp_history['approval_status'] = emp_history['approval_status'].apply(format_status)
-
+ 
                         s_col1, s_col2 = st.columns(2)
                         months_list = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
                         current_month_name = datetime.now().strftime('%B')
@@ -272,23 +357,24 @@ if role == "Employee":
                                     if 'Late' in str(row['Punctuality']):
                                         style_df.loc[idx, 'Punctuality'] = 'color: #cc0000; font-weight: bold;'
                             return style_df
-
+ 
                         styled_df = filtered_df[available_display_cols].style.apply(highlight_table, axis=None)
                         st.dataframe(styled_df, use_container_width=True)
-
+ 
 elif role == "Manager":
-    st.subheader("Manager Portal (USD)")
+    st.subheader("Manager Portal")
     
     if "manager_logged_in" not in st.session_state:
         st.session_state.manager_logged_in = False
-
+ 
     if not st.session_state.manager_logged_in:
         st.markdown("### 🔐 Manager Login")
         mgr_user = st.text_input("Username")
-        mgr_pass = st.text_input("Password", type="password")
+        mgr_pass = st.text_input("Password", type="password", autocomplete="off")
         
         if st.button("Login", type="primary"):
-            if mgr_user == "admin" and mgr_pass == "Money@100":
+            stored_mgr_pw = get_setting("manager_password", "Money@100")
+            if mgr_user == "admin" and mgr_pass == stored_mgr_pw:
                 st.session_state.manager_logged_in = True
                 st.rerun()
             else:
@@ -303,7 +389,7 @@ elif role == "Manager":
         
         st.divider()
         
-        mgr_tab1, mgr_tab2, mgr_tab3, mgr_tab4 = st.tabs(["👥 Employees & Shifts", "💰 Financial Dashboard", "⏱️ Time Punches", "📊 Expenses"])
+        mgr_tab1, mgr_tab2, mgr_tab3, mgr_tab4, mgr_tab5 = st.tabs(["👥 Employees & Shifts", "💰 Financial Dashboard", "⏱️ Time Punches", "📊 Expenses", "⚙️ Settings"])
         
         with mgr_tab1:
             st.markdown("### Employee & Shift Time Slot Management")
@@ -314,7 +400,7 @@ elif role == "Manager":
             with st.form("add_employee_form"):
                 new_emp_name = st.text_input("Employee Name")
                 new_emp_rate = st.number_input("Hourly Rate (NPR)", min_value=0.0, value=170.0, step=10.0)
-                new_emp_pin = st.text_input("4-Digit PIN", max_chars=4, type="password")
+                new_emp_pin = st.text_input("4-Digit PIN", max_chars=4, type="password", autocomplete="off")
                 shift_choices = [
                     "Morning Shift (06:00 - 14:00)",
                     "Evening Shift (14:00 - 22:00)",
@@ -328,11 +414,11 @@ elif role == "Manager":
                     execute_query("employees", "insert", data_row=[emp_id, new_emp_name, new_emp_rate, new_emp_pin, assigned_shift])
                     st.success(f"Employee '{new_emp_name}' added successfully with shift '{assigned_shift}'!")
                     st.rerun()
-
+ 
         with mgr_tab2:
-            st.markdown("### 💰 Financial Dashboard (USD)")
+            st.markdown("### 💰 Financial Dashboard")
             EXCHANGE_RATE = 133.0
-
+ 
             f_col1, f_col2 = st.columns(2)
             with f_col1: view_mode = st.selectbox("View Slicer", ["All-Time", "Monthly", "Daily"], key="fd_view_slicer")
             
@@ -349,10 +435,10 @@ elif role == "Manager":
                 expenses_df['dt'] = pd.to_datetime(expenses_df['expense_date'], errors='coerce')
                 expenses_df['date_str'] = expenses_df['dt'].dt.strftime('%Y-%m-%d')
                 expenses_df['month_year'] = expenses_df['dt'].dt.strftime('%B %Y')
-
+ 
             filtered_punches = punches_df.copy()
             filtered_expenses = expenses_df.copy()
-
+ 
             if view_mode == "Monthly" and not punches_df.empty:
                 available_months = sorted(punches_df['month_year'].dropna().unique(), reverse=True)
                 sel_month = st.selectbox("Select Month", available_months if available_months else [datetime.now().strftime('%B %Y')], key="fd_sel_month")
@@ -363,13 +449,13 @@ elif role == "Manager":
                 sel_date = st.selectbox("Select Date", available_dates if available_dates else [str(date.today())], key="fd_sel_date")
                 filtered_punches = punches_df[punches_df['date_str'] == sel_date]
                 if not expenses_df.empty: filtered_expenses = expenses_df[expenses_df['date_str'] == sel_date]
-
+ 
             total_cash_in = sum(safe_float(x) for x in filtered_punches['cash_in']) if not filtered_punches.empty and 'cash_in' in filtered_punches.columns else 0.0
             total_cash_out = sum(safe_float(x) for x in filtered_punches['cash_out']) if not filtered_punches.empty and 'cash_out' in filtered_punches.columns else 0.0
             total_bonus = sum(safe_float(x) for x in filtered_punches['bonus']) if not filtered_punches.empty and 'bonus' in filtered_punches.columns else 0.0
             
             revenue = total_cash_in - total_cash_out - (1.0 / 6.0) * total_bonus
-
+ 
             salary_expense_npr = 0.0
             if not filtered_punches.empty and not emps_df.empty:
                 rate_map = dict(zip(emps_df['emp_id'].astype(str), emps_df['hourly_rate'].apply(safe_float)))
@@ -379,7 +465,7 @@ elif role == "Manager":
                     rate = rate_map.get(e_id, 170.0)
                     salary_expense_npr += hrs * rate
             salary_expense = salary_expense_npr / EXCHANGE_RATE
-
+ 
             op_expense = 0.0
             other_expense = 0.0
             if not filtered_expenses.empty and 'amount' in filtered_expenses.columns:
@@ -388,22 +474,22 @@ elif role == "Manager":
                     amt = safe_float(row.get('amount', 0))
                     if 'other' in cat: other_expense += amt
                     else: op_expense += amt
-
+ 
             total_expenses = salary_expense + op_expense + other_expense
             profit = revenue - total_expenses
-
+ 
             kpi1, kpi2 = st.columns(2)
             kpi1.metric("Revenue", f"${revenue:,.2f}")
             kpi2.metric("Net Profit", f"${profit:,.2f}", delta=f"{(profit/revenue*100):.1f}% margin" if revenue > 0 else "0.0%")
             
             st.divider()
-            st.markdown("#### Summary Financial Table (USD)")
+            st.markdown("#### Financial Summary")
             fin_summary_df = pd.DataFrame({
                 "Financial Metric": ["Revenue", "Salary Expense", "Operating Expense", "Other Expense", "Total Expenses", "Net Profit"],
                 "Amount (USD)": [f"${revenue:,.2f}", f"${salary_expense:,.2f}", f"${op_expense:,.2f}", f"${other_expense:,.2f}", f"${total_expenses:,.2f}", f"${profit:,.2f}"]
             })
             st.dataframe(fin_summary_df, use_container_width=True)
-
+ 
             st.divider()
             st.markdown("#### Financial Trend Visualization")
             if not filtered_punches.empty and 'date_str' in filtered_punches.columns:
@@ -421,7 +507,7 @@ elif role == "Manager":
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("Insufficient data for trend visualization.")
-
+ 
         with mgr_tab3:
             st.markdown("### ⏱️ Time Punches & Reports")
             
@@ -500,10 +586,8 @@ elif role == "Manager":
                         st.success(f"Changes saved and {approved_count} shift(s) approved!")
                         st.rerun()
                     st.divider()
-
+ 
                 # --- TIME PUNCHES SLICERS ---
-                st.markdown("#### 🔍 Filters & Slicers")
-                
                 emp_names_list = ["All Employees"] + sorted(list(set(emp_name_map.values()))) if emp_name_map else ["All Employees"]
                 
                 tp_c1, tp_c2 = st.columns(2)
@@ -524,7 +608,7 @@ elif role == "Manager":
                     available_dates = sorted(filtered_table_df['date_str'].dropna().unique().tolist(), reverse=True)
                     sel_date = st.selectbox("Select Date", available_dates if available_dates else [str(date.today())], key="tp_sel_date")
                     filtered_table_df = filtered_table_df[filtered_table_df['date_str'] == sel_date]
-
+ 
                 st.divider()
                 st.markdown("#### 📋 Time Sheets & Cash Reports Table")
                 
@@ -542,7 +626,7 @@ elif role == "Manager":
                     display_columns = ['punch_id', 'employee_name', 'shift_name', 'clock_in', 'clock_out', 'total_hours', 'cash_in', 'cash_out', 'bonus', 'Status']
                     avail_cols = [c for c in display_columns if c in filtered_table_df.columns]
                     st.dataframe(filtered_table_df[avail_cols], use_container_width=True)
-
+ 
         with mgr_tab4:
             st.markdown("### Expenses Management")
             
@@ -550,7 +634,7 @@ elif role == "Manager":
             all_punches = get_as_df("time_punches")
             all_expenses = get_as_df("expenses")
             all_emps = get_as_df("employees")
-
+ 
             if not all_punches.empty and 'clock_in' in all_punches.columns:
                 all_punches['dt'] = pd.to_datetime(all_punches['clock_in'], errors='coerce')
                 all_punches['month_year'] = all_punches['dt'].dt.strftime('%B %Y')
@@ -560,19 +644,19 @@ elif role == "Manager":
                 all_expenses['dt'] = pd.to_datetime(all_expenses['expense_date'], errors='coerce')
                 all_expenses['month_year'] = all_expenses['dt'].dt.strftime('%B %Y')
                 all_expenses['date_str'] = all_expenses['dt'].dt.strftime('%Y-%m-%d')
-
+ 
             # Initialize variables safely
             salary_exp_usd = 0.0
             op_exp_usd = 0.0
             oth_exp_usd = 0.0
             sel_exp_month = datetime.now().strftime('%B %Y')
-
+ 
             # --- EXPENSES TAB VIEW SLICER ---
             exp_view_mode = st.selectbox("View Slicer", ["All-Time", "Monthly", "Daily"], key="exp_view_slicer")
-
+ 
             filtered_exp_df = all_expenses.copy()
             filtered_punches_exp = all_punches.copy()
-
+ 
             if exp_view_mode == "Monthly" and not all_expenses.empty:
                 available_exp_months = sorted(list(set(
                     (all_expenses['month_year'].dropna().tolist() if 'month_year' in all_expenses.columns else []) +
@@ -582,7 +666,7 @@ elif role == "Manager":
                 
                 filtered_exp_df = all_expenses[all_expenses['month_year'] == sel_exp_month] if not all_expenses.empty and 'month_year' in all_expenses.columns else pd.DataFrame()
                 filtered_punches_exp = all_punches[all_punches['month_year'] == sel_exp_month] if not all_punches.empty and 'month_year' in all_punches.columns else pd.DataFrame()
-
+ 
             elif exp_view_mode == "Daily" and not all_expenses.empty:
                 available_exp_dates = sorted(list(set(
                     (all_expenses['date_str'].dropna().tolist() if 'date_str' in all_expenses.columns else []) +
@@ -592,9 +676,9 @@ elif role == "Manager":
                 
                 filtered_exp_df = all_expenses[all_expenses['date_str'] == sel_exp_date] if not all_expenses.empty and 'date_str' in all_expenses.columns else pd.DataFrame()
                 filtered_punches_exp = all_punches[all_punches['date_str'] == sel_exp_date] if not all_punches.empty and 'date_str' in all_punches.columns else pd.DataFrame()
-
+ 
             st.divider()
-
+ 
             # --- MONTHLY EMPLOYEE PAYROLL SUMMARY TABLE (TOP CORNER OF EXPENSES TAB) ---
             st.markdown(f"#### 👥 Employee Monthly Hours & Salary Summary ({exp_view_mode}: {sel_exp_month if exp_view_mode=='Monthly' else ('All-Time' if exp_view_mode=='All-Time' else locals().get('sel_exp_date',''))})")
             if not all_emps.empty:
@@ -618,9 +702,9 @@ elif role == "Manager":
                 st.dataframe(emp_summary_df, use_container_width=True)
             else:
                 st.info("No employee records found.")
-
+ 
             st.divider()
-
+ 
             # Calculate Salary Expense for filtered period
             sal_exp_npr = 0.0
             if not filtered_punches_exp.empty and not all_emps.empty:
@@ -631,14 +715,14 @@ elif role == "Manager":
                     rate = rate_map.get(e_id, 170.0)
                     sal_exp_npr += hrs * rate
             salary_expense_usd = sal_exp_npr / EXCHANGE_RATE
-
+ 
             if not filtered_exp_df.empty and 'amount' in filtered_exp_df.columns:
                 for _, row in filtered_exp_df.iterrows():
                     cat = str(row.get('category', '')).lower()
                     amt = safe_float(row.get('amount', 0))
                     if 'other' in cat: oth_exp_usd += amt
                     else: op_exp_usd += amt
-
+ 
             st.markdown(f"#### Expense Breakdown ({exp_view_mode} View)")
             pie_df = pd.DataFrame({
                 "Category": ["Salary Expense", "Operating Expenses", "Other Expenses"],
@@ -649,9 +733,9 @@ elif role == "Manager":
                 st.plotly_chart(fig_pie, use_container_width=True)
             else:
                 st.info("No expense data available for the selected period to display the pie chart.")
-
+ 
             st.divider()
-
+ 
             st.markdown("#### Month-over-Month Comparison (This Month vs. Previous Month)")
             try:
                 ref_month = sel_exp_month if exp_view_mode == "Monthly" and 'sel_exp_month' in locals() else datetime.now().strftime('%B %Y')
@@ -661,7 +745,7 @@ elif role == "Manager":
             except:
                 ref_month = datetime.now().strftime('%B %Y')
                 prev_month_str = ""
-
+ 
             def get_month_totals(m_str):
                 p_m = all_punches[all_punches['month_year'] == m_str] if not all_punches.empty and 'month_year' in all_punches.columns else pd.DataFrame()
                 e_m = all_expenses[all_expenses['month_year'] == m_str] if not all_expenses.empty and 'month_year' in all_expenses.columns else pd.DataFrame()
@@ -675,7 +759,7 @@ elif role == "Manager":
                         rate = rate_map.get(e_id, 170.0)
                         s_npr += hrs * rate
                 s_usd = s_npr / EXCHANGE_RATE
-
+ 
                 o_usd = 0.0
                 ot_usd = 0.0
                 if not e_m.empty and 'amount' in e_m.columns:
@@ -685,22 +769,22 @@ elif role == "Manager":
                         if 'other' in cat: ot_usd += amt
                         else: o_usd += amt
                 return s_usd, o_usd, ot_usd
-
+ 
             curr_sal, curr_op, curr_oth = get_month_totals(ref_month)
             prev_sal, prev_op, prev_oth = get_month_totals(prev_month_str)
-
+ 
             comp_df = pd.DataFrame({
                 "Category": ["Salary Expense", "Operating Expenses", "Other Expenses", "Salary Expense", "Operating Expenses", "Other Expenses"],
                 "Month": [ref_month, ref_month, ref_month, prev_month_str, prev_month_str, prev_month_str],
                 "Amount (USD)": [curr_sal, curr_op, curr_oth, prev_sal, prev_op, prev_oth]
             })
-
+ 
             fig_bar = px.bar(comp_df, x="Category", y="Amount (USD)", color="Month", barmode="group",
                              title=f"Comparison: {ref_month} vs {prev_month_str}")
             st.plotly_chart(fig_bar, use_container_width=True)
-
+ 
             st.divider()
-
+ 
             st.markdown("#### Add New Expense")
             with st.form("add_expense_form"):
                 exp_category = st.selectbox("Expense Category", ["Operating", "Other"])
@@ -716,10 +800,56 @@ elif role == "Manager":
                     execute_query("expenses", "insert", data_row=new_exp_row)
                     st.success(f"Expense of ${exp_cost:,.2f} to {exp_vendor} added successfully!")
                     st.rerun()
-
+ 
             st.divider()
             st.markdown(f"#### Logged Expenses Table ({exp_view_mode} View)")
             if filtered_exp_df.empty:
                 st.info("No expenses logged for this period.")
             else:
                 st.dataframe(filtered_exp_df, use_container_width=True)
+ 
+        with mgr_tab5:
+            st.markdown("### ⚙️ Settings")
+ 
+            st.markdown("#### 🔑 Change Manager Password")
+            with st.form("change_mgr_pw_form"):
+                current_pw = st.text_input("Current Password", type="password", autocomplete="off")
+                new_pw = st.text_input("New Password", type="password", autocomplete="off")
+                confirm_pw = st.text_input("Confirm New Password", type="password", autocomplete="off")
+                submit_pw = st.form_submit_button("Update Password", type="primary")
+ 
+                if submit_pw:
+                    stored_pw = get_setting("manager_password", "Money@100")
+                    if current_pw != stored_pw:
+                        st.error("Current password is incorrect.")
+                    elif not new_pw:
+                        st.error("New password cannot be empty.")
+                    elif new_pw != confirm_pw:
+                        st.error("New password and confirmation do not match.")
+                    else:
+                        set_setting("manager_password", new_pw)
+                        st.success("Manager password updated successfully! Use it next time you log in.")
+ 
+            st.divider()
+ 
+            st.markdown("#### 🔢 Change Employee PIN")
+            emp_df_settings = get_as_df("employees")
+            if emp_df_settings.empty or 'name' not in emp_df_settings.columns:
+                st.info("No employees found.")
+            else:
+                with st.form("change_emp_pin_form"):
+                    sel_emp_for_pin = st.selectbox("Select Employee", emp_df_settings['name'].tolist())
+                    new_pin = st.text_input("New 4-Digit PIN", max_chars=4, type="password", autocomplete="off")
+                    confirm_pin = st.text_input("Confirm New PIN", max_chars=4, type="password", autocomplete="off")
+                    submit_pin = st.form_submit_button("Update PIN", type="primary")
+ 
+                    if submit_pin:
+                        if not new_pin or len(new_pin) != 4 or not new_pin.isdigit():
+                            st.error("PIN must be exactly 4 digits.")
+                        elif new_pin != confirm_pin:
+                            st.error("PINs do not match.")
+                        else:
+                            emp_row = emp_df_settings[emp_df_settings['name'] == sel_emp_for_pin].iloc[0]
+                            execute_query("employees", "update", row_id=emp_row['emp_id'], update_dict={"pin": new_pin})
+                            st.success(f"PIN updated for {sel_emp_for_pin}!")
+                            st.rerun()
