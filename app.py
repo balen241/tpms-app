@@ -22,15 +22,15 @@ def nepal_today():
 
 def determine_shift(dt):
     """Given a Nepal-local datetime, return the correct shift label based on actual clock time.
-    Morning: 06:00–14:00 | Evening: 14:00–22:00 | Night: 22:00–02:00 (wraps past midnight)."""
+    Morning: 06:00–14:00 | Evening: 14:00–22:00 | Night: 22:00–06:00 (wraps past midnight)."""
     t = dt.time()
     if time(6, 0) <= t < time(14, 0):
         return "Morning Shift (06:00 - 14:00)"
     elif time(14, 0) <= t < time(22, 0):
         return "Evening Shift (14:00 - 22:00)"
     else:
-        # Covers 22:00–23:59 and 00:00–02:00 (and any stray hours as a safe fallback)
-        return "Night Shift (22:00 - 02:00)"
+        # Covers 22:00–23:59 and 00:00–05:59
+        return "Night Shift (22:00 - 06:00)"
 
 st.set_page_config(page_title="TPMS", page_icon="⏰", layout="wide")
 
@@ -445,7 +445,7 @@ elif role == "Manager":
                 shift_choices = [
                     "Morning Shift (06:00 - 14:00)",
                     "Evening Shift (14:00 - 22:00)",
-                    "Night Shift (22:00 - 02:00)"
+                    "Night Shift (22:00 - 06:00)"
                 ]
                 assigned_shift = st.selectbox("Assign 8-Hour Time Slot", shift_choices)
                 add_emp_btn = st.form_submit_button("Add Employee", type="primary")
@@ -472,7 +472,7 @@ elif role == "Manager":
                     shift_choices_edit = [
                         "Morning Shift (06:00 - 14:00)",
                         "Evening Shift (14:00 - 22:00)",
-                        "Night Shift (22:00 - 02:00)"
+                        "Night Shift (22:00 - 06:00)"
                     ]
                     default_idx = shift_choices_edit.index(current_shift) if current_shift in shift_choices_edit else 0
 
@@ -623,7 +623,7 @@ elif role == "Manager":
                                 options=[
                                     "Morning Shift (06:00 - 14:00)",
                                     "Evening Shift (14:00 - 22:00)",
-                                    "Night Shift (22:00 - 02:00)"
+                                    "Night Shift (22:00 - 06:00)"
                                 ],
                                 required=True
                             )
@@ -934,7 +934,7 @@ elif role == "Manager":
                         bf_shift = st.selectbox("Shift", [
                             "Morning Shift (06:00 - 14:00)",
                             "Evening Shift (14:00 - 22:00)",
-                            "Night Shift (22:00 - 02:00)"
+                            "Night Shift (22:00 - 06:00)"
                         ], key="bf_shift")
                     with bf_c2:
                         bf_time_in = st.time_input("Clock In Time", value=time(6, 0), key="bf_in")
