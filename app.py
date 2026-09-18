@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import uuid
 from datetime import datetime, date, time, timedelta
 from zoneinfo import ZoneInfo
 import gspread
@@ -116,7 +117,9 @@ def verify_sheet_structure():
         "employees": ["emp_id", "name", "hourly_rate", "pin", "shift_name"],
         "time_punches": ["punch_id", "emp_id", "shift_name", "clock_in", "clock_out", "total_hours", "cash_in", "cash_out", "bonus", "approval_status", "manager_message", "message_acknowledged"],
         "expenses": ["expense_id", "expense_date", "category", "vendor", "amount", "notes"],
-        "settings": ["key", "value"]
+        "settings": ["key", "value"],
+        "shift_transactions": ["txn_id", "punch_id", "emp_id", "amount", "timestamp"],
+        "active_sessions": ["session_token", "emp_id", "last_activity"]
     }
     
     try:
@@ -176,6 +179,25 @@ def execute_query(worksheet_name, action, data_row=None, row_id=None, update_dic
                     ws.update_cell(row_num, col_num, v)
     st.cache_data.clear()
 
+def delete_matching_rows(worksheet_name, column_name, value):
+    """Delete every row in worksheet_name where column_name == value.
+    Used to wipe temporary per-shift data (e.g. shift_transactions) once it's no longer needed."""
+    ws = gsheet.worksheet(worksheet_name)
+    all_values = ws.get_all_values()
+    if not all_values:
+        return
+    headers = all_values[0]
+    if column_name not in headers:
+        return
+    col_idx = headers.index(column_name)
+    rows_to_delete = [
+        i for i, row in enumerate(all_values[1:], start=2)
+        if len(row) > col_idx and str(row[col_idx]) == str(value)
+    ]
+    for row_num in sorted(rows_to_delete, reverse=True):
+        ws.delete_rows(row_num)
+    st.cache_data.clear()
+
 def get_setting(key, default=""):
     try:
         ws = gsheet.worksheet("settings")
@@ -195,6 +217,47 @@ def set_setting(key, value):
     else:
         ws.append_row([key, value])
     st.cache_data.clear()
+
+# --- PERSISTENT LOGIN SESSIONS (survive page refresh, expire after 30 min idle) ---
+SESSION_TIMEOUT_MINUTES = 30
+
+def create_session(emp_id):
+    """Start a new session for this employee and return its token."""
+    token = str(uuid.uuid4())
+    ws = gsheet.worksheet("active_sessions")
+    ws.append_row([token, emp_id, nepal_now().strftime("%Y-%m-%d %H:%M:%S")])
+    st.cache_data.clear()
+    return token
+
+def get_valid_session(token):
+    """Return the emp_id for this token if it exists and hasn't timed out, else None.
+    Also cleans up the session row if it's expired."""
+    if not token:
+        return None
+    df = get_as_df("active_sessions")
+    if df.empty or 'session_token' not in df.columns:
+        return None
+    match = df[df['session_token'].astype(str) == str(token)]
+    if match.empty:
+        return None
+    row = match.iloc[0]
+    try:
+        last_activity = datetime.strptime(str(row['last_activity']), "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+    if (nepal_now() - last_activity).total_seconds() > SESSION_TIMEOUT_MINUTES * 60:
+        delete_matching_rows("active_sessions", "session_token", token)
+        return None
+    return str(row['emp_id'])
+
+def touch_session(token):
+    """Reset the idle timer for this session — called on every active page load."""
+    if token:
+        execute_query("active_sessions", "update", row_id=token, update_dict={"last_activity": nepal_now().strftime("%Y-%m-%d %H:%M:%S")})
+
+def end_session(token):
+    if token:
+        delete_matching_rows("active_sessions", "session_token", token)
 
 # --- APP UI ---
 st.title("⏰ TPMS")
@@ -218,6 +281,21 @@ if role == "Employee":
         if "emp_logged_in" not in st.session_state:
             st.session_state.emp_logged_in = False
             st.session_state.current_emp = None
+            st.session_state.session_token = None
+
+        # Auto-restore login from the URL's session token, so a page refresh
+        # (or a mobile browser reconnecting) doesn't require re-entering the PIN.
+        if not st.session_state.emp_logged_in:
+            url_token = st.query_params.get("session")
+            if url_token:
+                restored_emp_id = get_valid_session(url_token)
+                if restored_emp_id:
+                    match = emp_df[emp_df['emp_id'].astype(str) == str(restored_emp_id)]
+                    if not match.empty:
+                        st.session_state.emp_logged_in = True
+                        st.session_state.current_emp = match.iloc[0].to_dict()
+                        st.session_state.session_token = url_token
+                        touch_session(url_token)
 
         if not st.session_state.emp_logged_in:
             st.markdown("### 🔐 Employee Login")
@@ -227,13 +305,17 @@ if role == "Employee":
             if st.button("Login", type="primary"):
                 emp_row = emp_df[emp_df['name'] == selected_name].iloc[0]
                 if str(emp_row['pin']) == str(entered_pin):
+                    token = create_session(emp_row['emp_id'])
                     st.session_state.emp_logged_in = True
                     st.session_state.current_emp = emp_row.to_dict()
+                    st.session_state.session_token = token
+                    st.query_params["session"] = token
                     st.rerun()
                 else:
                     st.error("Incorrect PIN. Please try again.")
         else:
             emp = st.session_state.current_emp
+            touch_session(st.session_state.get("session_token"))
             st.success(f"Welcome, **{emp['name']}**! 👋")
             
             top_c1, top_c2 = st.columns([3, 1])
@@ -241,8 +323,12 @@ if role == "Employee":
                 st.write(f"ID: `{emp['emp_id']}` | Shift: **{emp.get('shift_name', 'Standard')}** | Rate: **NPR {emp.get('hourly_rate', 170)}/hr**")
             with top_c2:
                 if st.button("Logout"):
+                    end_session(st.session_state.get("session_token"))
                     st.session_state.emp_logged_in = False
                     st.session_state.current_emp = None
+                    st.session_state.session_token = None
+                    if "session" in st.query_params:
+                        del st.query_params["session"]
                     st.rerun()
             
             st.divider()
@@ -281,21 +367,68 @@ if role == "Employee":
                 else:
                     clock_in_time = active_punch['clock_in']
                     st.success(f"Status: **Currently Clocked In** 🟢\n\n* Shift: **{active_punch['shift_name']}**\n* Started at: **{clock_in_time}**")
-                    
+
+                    # --- LOG A SALE (builds up Cash In live during the shift) ---
+                    st.divider()
+                    st.markdown("### 💵 Log a Sale")
+                    st.caption("Add each payment as you receive it. These add up automatically into Cash In at clock-out — no need to total them yourself.")
+
+                    shift_txn_df = get_as_df("shift_transactions")
+                    my_txns = pd.DataFrame()
+                    if not shift_txn_df.empty and 'punch_id' in shift_txn_df.columns:
+                        my_txns = shift_txn_df[shift_txn_df['punch_id'].astype(str) == str(active_punch['punch_id'])]
+                    current_shift_total = my_txns['amount'].apply(safe_float).sum() if not my_txns.empty else 0.0
+
+                    st.metric("Cash In So Far This Shift", f"${current_shift_total:,.2f}")
+
+                    with st.form("add_sale_form", clear_on_submit=True):
+                        sale_amount = st.number_input("Sale Amount (USD)", min_value=0.01, value=None, step=1.0, placeholder="Enter amount")
+                        add_sale_submitted = st.form_submit_button("➕ Add Sale")
+
+                        if add_sale_submitted:
+                            if sale_amount is None or sale_amount <= 0:
+                                st.error("Enter a valid amount greater than 0.")
+                            elif st.session_state.get("add_sale_in_progress"):
+                                st.warning("Already adding, please wait...")
+                            else:
+                                st.session_state["add_sale_in_progress"] = True
+                                try:
+                                    txn_time = nepal_now()
+                                    txn_id = f"T_{int(txn_time.timestamp() * 1000)}"
+                                    new_txn = [txn_id, active_punch['punch_id'], emp['emp_id'], float(sale_amount), txn_time.strftime("%Y-%m-%d %H:%M:%S")]
+                                    execute_query("shift_transactions", "insert", data_row=new_txn)
+                                    st.success(f"Added ${sale_amount:,.2f}")
+                                    st.rerun()
+                                finally:
+                                    st.session_state["add_sale_in_progress"] = False
+
+                    if not my_txns.empty:
+                        with st.expander(f"View {len(my_txns)} entries logged this shift"):
+                            st.caption("Made a mistake? Tap 🗑️ next to the wrong entry to remove it.")
+                            for _, txn_row in my_txns.sort_values('timestamp').iterrows():
+                                col_time, col_amt, col_del = st.columns([3, 2, 1])
+                                col_time.write(txn_row['timestamp'])
+                                col_amt.write(f"${safe_float(txn_row['amount']):,.2f}")
+                                if col_del.button("🗑️", key=f"del_txn_{txn_row['txn_id']}"):
+                                    delete_matching_rows("shift_transactions", "txn_id", txn_row['txn_id'])
+                                    st.success("Entry removed.")
+                                    st.rerun()
+
+                    # --- END OF SHIFT REPORT ---
                     st.divider()
                     st.markdown("### 📝 End of Shift Daily Report")
-                    st.caption("Enter the amounts for this shift. If there's nothing to report for a field, enter 0 — every field must be filled before you can clock out.")
+                    st.caption("Cash In is calculated automatically from what you logged above. Fill in Cash Out and Bonus below — enter 0 if there's nothing to report.")
+                    st.info(f"**Cash In (automatic): ${current_shift_total:,.2f}**")
                     
                     with st.form("daily_report_form"):
-                        cash_in = st.number_input("Cash In (USD)", min_value=0.0, value=None, step=1.0, placeholder="Enter amount, or 0")
                         cash_out = st.number_input("Cash Out (USD)", min_value=0.0, value=None, step=1.0, placeholder="Enter amount, or 0")
                         bonus = st.number_input("Customer Bonus / Tips (USD)", min_value=0.0, value=None, step=1.0, placeholder="Enter amount, or 0")
                         
                         submitted = st.form_submit_button("🔴 Submit Report & Clock Out", type="primary", use_container_width=True)
                         
                         if submitted:
-                            if cash_in is None or cash_out is None or bonus is None:
-                                st.error("Please fill in all three fields before clocking out. Enter 0 if there's nothing to report.")
+                            if cash_out is None or bonus is None:
+                                st.error("Please fill in both fields before clocking out. Enter 0 if there's nothing to report.")
                             elif st.session_state.get("clock_out_in_progress"):
                                 st.warning("Already processing your clock-out, please wait...")
                             else:
@@ -309,11 +442,21 @@ if role == "Employee":
                                     except Exception:
                                         diff_hours = 0.0
 
+                                    # Recompute the final total fresh, in case a sale was added moments ago
+                                    fresh_txn_df = get_as_df("shift_transactions")
+                                    if not fresh_txn_df.empty and 'punch_id' in fresh_txn_df.columns:
+                                        final_cash_in = fresh_txn_df[fresh_txn_df['punch_id'].astype(str) == str(active_punch['punch_id'])]['amount'].apply(safe_float).sum()
+                                    else:
+                                        final_cash_in = 0.0
+
                                     execute_query(
                                         "time_punches", "update", row_id=active_punch['punch_id'], 
-                                        update_dict={"clock_out": clock_out_str, "total_hours": diff_hours, "cash_in": float(cash_in), "cash_out": float(cash_out), "bonus": float(bonus)}
+                                        update_dict={"clock_out": clock_out_str, "total_hours": diff_hours, "cash_in": float(final_cash_in), "cash_out": float(cash_out), "bonus": float(bonus)}
                                     )
-                                    st.success(f"Clocked out successfully at {clock_out_str}! Total hours: {diff_hours} hrs.")
+                                    # Wipe this shift's individual sale entries now that they're summarized above
+                                    delete_matching_rows("shift_transactions", "punch_id", active_punch['punch_id'])
+
+                                    st.success(f"Clocked out successfully at {clock_out_str}! Total hours: {diff_hours} hrs. Cash In: ${final_cash_in:,.2f}")
                                     st.rerun()
                                 finally:
                                     st.session_state["clock_out_in_progress"] = False
