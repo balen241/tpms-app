@@ -371,7 +371,6 @@ if role == "Employee":
                     # --- LOG A SALE (builds up Cash In live during the shift) ---
                     st.divider()
                     st.markdown("### 💵 Log a Sale")
-                    st.caption("Add each payment as you receive it. These add up automatically into Cash In at clock-out — no need to total them yourself.")
 
                     shift_txn_df = get_as_df("shift_transactions")
                     my_txns = pd.DataFrame()
@@ -382,7 +381,7 @@ if role == "Employee":
                     st.metric("Cash In So Far This Shift", f"${current_shift_total:,.2f}")
 
                     with st.form("add_sale_form", clear_on_submit=True):
-                        sale_amount = st.number_input("Sale Amount (USD)", min_value=0.01, value=None, step=1.0, placeholder="Enter amount")
+                        sale_amount = st.number_input("Sale Amount", min_value=0.01, value=None, step=1.0, placeholder="Enter amount")
                         add_sale_submitted = st.form_submit_button("➕ Add Sale")
 
                         if add_sale_submitted:
@@ -417,12 +416,12 @@ if role == "Employee":
                     # --- END OF SHIFT REPORT ---
                     st.divider()
                     st.markdown("### 📝 End of Shift Daily Report")
-                    st.caption("Cash In is calculated automatically from what you logged above. Fill in Cash Out and Bonus below — enter 0 if there's nothing to report.")
-                    st.info(f"**Cash In (automatic): ${current_shift_total:,.2f}**")
+                    st.caption("Fill in Cash Out and Bonus below — enter 0 if there's nothing to report.")
+                    st.info(f"**Cash In: ${current_shift_total:,.2f}**")
                     
                     with st.form("daily_report_form"):
-                        cash_out = st.number_input("Cash Out (USD)", min_value=0.0, value=None, step=1.0, placeholder="Enter amount, or 0")
-                        bonus = st.number_input("Customer Bonus / Tips (USD)", min_value=0.0, value=None, step=1.0, placeholder="Enter amount, or 0")
+                        cash_out = st.number_input("Cash Out", min_value=0.0, value=None, step=1.0, placeholder="Enter amount, or 0")
+                        bonus = st.number_input("Customer Bonus / Tips", min_value=0.0, value=None, step=1.0, placeholder="Enter amount, or 0")
                         
                         submitted = st.form_submit_button("🔴 Submit Report & Clock Out", type="primary", use_container_width=True)
                         
