@@ -145,7 +145,7 @@ def verify_sheet_structure():
 verify_sheet_structure()
 
 # --- HELPER FUNCTIONS WITH CACHING ---
-@st.cache_data(ttl=5)
+@st.cache_data(ttl=20)
 def get_as_df(worksheet_name):
     try:
         ws = gsheet.worksheet(worksheet_name)
@@ -175,10 +175,14 @@ def execute_query(worksheet_name, action, data_row=None, row_id=None, update_dic
         if cell:
             row_num = cell.row
             headers = ws.row_values(1)
+            # Batch every field into one API call instead of one call per field
+            cell_list = []
             for k, v in update_dict.items():
                 if k in headers:
                     col_num = headers.index(k) + 1
-                    ws.update_cell(row_num, col_num, v)
+                    cell_list.append(gspread.Cell(row=row_num, col=col_num, value=v))
+            if cell_list:
+                ws.update_cells(cell_list)
     st.cache_data.clear()
 
 def delete_matching_rows(worksheet_name, column_name, value):
@@ -1023,11 +1027,14 @@ elif role == "Manager":
                                 except Exception:
                                     recalculated_hours = row['total_hours']
 
+                                cell_list = []
                                 for field in ['clock_in', 'clock_out', 'total_hours', 'cash_in', 'cash_out', 'bonus']:
                                     if field in headers:
                                         col_num = headers.index(field) + 1
                                         value_to_save = recalculated_hours if field == 'total_hours' else row[field]
-                                        ws.update_cell(row_num, col_num, value_to_save)
+                                        cell_list.append(gspread.Cell(row=row_num, col=col_num, value=value_to_save))
+                                if cell_list:
+                                    ws.update_cells(cell_list)
                         st.cache_data.clear()
                         st.success("Changes saved successfully!")
                         st.rerun()
@@ -1048,17 +1055,20 @@ elif role == "Manager":
                                 except Exception:
                                     recalculated_hours = row['total_hours']
 
+                                cell_list = []
                                 for field in ['clock_in', 'clock_out', 'total_hours', 'cash_in', 'cash_out', 'bonus']:
                                     if field in headers:
                                         col_num = headers.index(field) + 1
                                         value_to_save = recalculated_hours if field == 'total_hours' else row[field]
-                                        ws.update_cell(row_num, col_num, value_to_save)
-                                
-                                if row.get('Approve?', False):
-                                    if 'approval_status' in headers:
-                                        col_num = headers.index('approval_status') + 1
-                                        ws.update_cell(row_num, col_num, "Approved")
-                                        approved_count += 1
+                                        cell_list.append(gspread.Cell(row=row_num, col=col_num, value=value_to_save))
+
+                                if row.get('Approve?', False) and 'approval_status' in headers:
+                                    col_num = headers.index('approval_status') + 1
+                                    cell_list.append(gspread.Cell(row=row_num, col=col_num, value="Approved"))
+                                    approved_count += 1
+
+                                if cell_list:
+                                    ws.update_cells(cell_list)
                         st.cache_data.clear()
                         st.success(f"Changes saved and {approved_count} shift(s) approved!")
                         st.rerun()
