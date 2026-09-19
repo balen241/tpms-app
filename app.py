@@ -150,7 +150,8 @@ def get_as_df(worksheet_name):
         ws = gsheet.worksheet(worksheet_name)
         data = ws.get_all_records()
         return pd.DataFrame(data)
-    except Exception:
+    except Exception as e:
+        st.warning(f"Couldn't load '{worksheet_name}' from the sheet right now: {e}. Retrying may help — this is usually temporary (e.g. a brief Google Sheets API limit).")
         return pd.DataFrame()
 
 def safe_float(val):
@@ -315,7 +316,13 @@ if role == "Employee":
                     st.error("Incorrect PIN. Please try again.")
         else:
             emp = st.session_state.current_emp
-            touch_session(st.session_state.get("session_token"))
+            # Only refresh the session's timer every couple of minutes, not on every
+            # single click — keeps well within the 30-min idle window while cutting
+            # down on Google Sheets API calls that could otherwise hit rate limits.
+            last_touch = st.session_state.get("last_session_touch")
+            if last_touch is None or (nepal_now() - last_touch).total_seconds() > 120:
+                touch_session(st.session_state.get("session_token"))
+                st.session_state["last_session_touch"] = nepal_now()
             st.success(f"Welcome, **{emp['name']}**! 👋")
             
             top_c1, top_c2 = st.columns([3, 1])
