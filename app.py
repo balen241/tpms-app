@@ -579,7 +579,7 @@ elif role == "Manager":
         
         st.divider()
         
-        mgr_tab1, mgr_tab2, mgr_tab3, mgr_tab4, mgr_tab5 = st.tabs(["👥 Employees & Shifts", "💰 Financial Dashboard", "⏱️ Time Punches", "📊 Expenses", "⚙️ Settings"])
+        mgr_tab1, mgr_tab2, mgr_tab3, mgr_tab4, mgr_tab5, mgr_tab6 = st.tabs(["👥 Employees & Shifts", "💰 Financial Dashboard", "📈 Sales Insights", "⏱️ Time Punches", "📊 Expenses", "⚙️ Settings"])
         
         with mgr_tab1:
             st.markdown("### Employee & Shift Time Slot Management")
@@ -675,8 +675,9 @@ elif role == "Manager":
             total_cash_in = sum(safe_float(x) for x in filtered_punches['cash_in']) if not filtered_punches.empty and 'cash_in' in filtered_punches.columns else 0.0
             total_cash_out = sum(safe_float(x) for x in filtered_punches['cash_out']) if not filtered_punches.empty and 'cash_out' in filtered_punches.columns else 0.0
             total_bonus = sum(safe_float(x) for x in filtered_punches['bonus']) if not filtered_punches.empty and 'bonus' in filtered_punches.columns else 0.0
+            bonus_allocation = (1.0 / 6.0) * total_bonus
             
-            revenue = total_cash_in - total_cash_out - (1.0 / 6.0) * total_bonus
+            revenue = total_cash_in - total_cash_out - bonus_allocation
 
             salary_expense_npr = 0.0
             if not filtered_punches.empty and not emps_df.empty:
@@ -699,38 +700,243 @@ elif role == "Manager":
 
             total_expenses = salary_expense + op_expense + other_expense
             profit = revenue - total_expenses
-
-            kpi1, kpi2 = st.columns(2)
-            kpi1.metric("Revenue", f"${revenue:,.2f}")
-            kpi2.metric("Net Profit", f"${profit:,.2f}", delta=f"{(profit/revenue*100):.1f}% margin" if revenue > 0 else "0.0%")
-            
-            st.divider()
-            st.markdown("#### Financial Summary")
-            fin_summary_df = pd.DataFrame({
-                "Financial Metric": ["Revenue", "Salary Expense", "Operating Expense", "Other Expense", "Total Expenses", "Net Profit"],
-                "Amount (USD)": [f"${revenue:,.2f}", f"${salary_expense:,.2f}", f"${op_expense:,.2f}", f"${other_expense:,.2f}", f"${total_expenses:,.2f}", f"${profit:,.2f}"]
-            })
-            st.dataframe(fin_summary_df, use_container_width=True)
+            margin = (profit / revenue * 100) if revenue > 0 else 0.0
+            profit_color = "#16a34a" if profit >= 0 else "#dc2626"
 
             st.divider()
-            st.markdown("#### Financial Trend Visualization")
-            if not filtered_punches.empty and 'date_str' in filtered_punches.columns:
-                chart_df = filtered_punches.groupby('date_str').agg({
-                    'cash_in': lambda x: sum(safe_float(v) for v in x),
-                    'cash_out': lambda x: sum(safe_float(v) for v in x),
-                    'bonus': lambda x: sum(safe_float(v) for v in x)
-                }).reset_index()
-                chart_df['Revenue'] = chart_df['cash_in'] - chart_df['cash_out'] - (1.0 / 6.0) * chart_df['bonus']
-                chart_df['Profit'] = chart_df['Revenue']
-                
-                fig = px.line(chart_df, x='date_str', y=['cash_in', 'cash_out', 'Revenue', 'Profit'],
-                              labels={'value': 'Amount (USD)', 'date_str': 'Date', 'variable': 'Metric'},
-                              title="Cash In, Cash Out, Revenue, and Profit Trends")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("Insufficient data for trend visualization.")
+
+            kpi_c1, kpi_c2, kpi_c3, kpi_c4 = st.columns(4)
+            kpi_c1.metric("Revenue", f"${revenue:,.2f}")
+            kpi_c2.metric("Total Expenses", f"${total_expenses:,.2f}")
+            kpi_c3.metric("Net Profit", f"${profit:,.2f}")
+            kpi_c4.metric("Profit Margin", f"{margin:.1f}%")
+
+            st.divider()
+            st.markdown("#### Income Statement")
+
+            income_statement_html = f"""
+            <div style="border:1px solid #e6e8ec;border-radius:12px;padding:1.5rem 2rem;background:#f8f9fb;">
+              <table style="width:100%;border-collapse:collapse;font-size:0.95rem;">
+                <tr><td style="padding:6px 0;color:#333;">Cash In</td><td style="text-align:right;padding:6px 0;color:#333;">${total_cash_in:,.2f}</td></tr>
+                <tr><td style="padding:6px 0;color:#333;">Less: Cash Out</td><td style="text-align:right;padding:6px 0;color:#b91c1c;">(${total_cash_out:,.2f})</td></tr>
+                <tr><td style="padding:6px 0;color:#333;">Less: Bonus / Tips Allocation</td><td style="text-align:right;padding:6px 0;color:#b91c1c;">(${bonus_allocation:,.2f})</td></tr>
+                <tr style="border-top:1px solid #cbd5e1;"><td style="padding:8px 0;font-weight:600;color:#1a1a2e;">Total Revenue</td><td style="text-align:right;padding:8px 0;font-weight:600;color:#1a1a2e;">${revenue:,.2f}</td></tr>
+                <tr><td colspan="2" style="padding-top:16px;"></td></tr>
+                <tr><td style="padding:6px 0;color:#333;">Salary Expense</td><td style="text-align:right;padding:6px 0;color:#333;">${salary_expense:,.2f}</td></tr>
+                <tr><td style="padding:6px 0;color:#333;">Operating Expense</td><td style="text-align:right;padding:6px 0;color:#333;">${op_expense:,.2f}</td></tr>
+                <tr><td style="padding:6px 0;color:#333;">Other Expense</td><td style="text-align:right;padding:6px 0;color:#333;">${other_expense:,.2f}</td></tr>
+                <tr style="border-top:1px solid #cbd5e1;"><td style="padding:8px 0;font-weight:600;color:#1a1a2e;">Total Expenses</td><td style="text-align:right;padding:8px 0;font-weight:600;color:#1a1a2e;">${total_expenses:,.2f}</td></tr>
+                <tr><td colspan="2" style="padding-top:18px;"></td></tr>
+                <tr style="border-top:2px solid #1a1a2e;"><td style="padding:12px 0;font-weight:700;font-size:1.2rem;color:{profit_color};">NET PROFIT</td><td style="text-align:right;padding:12px 0;font-weight:700;font-size:1.2rem;color:{profit_color};">${profit:,.2f}</td></tr>
+                <tr><td style="color:#6b7280;font-size:0.85rem;">Profit Margin</td><td style="text-align:right;color:#6b7280;font-size:0.85rem;">{margin:.1f}%</td></tr>
+              </table>
+            </div>
+            """
+            st.markdown(income_statement_html, unsafe_allow_html=True)
 
         with mgr_tab3:
+            st.markdown("### 📈 Sales Insights")
+
+            si_punches = get_as_df("time_punches")
+            si_emps = get_as_df("employees")
+
+            if si_punches.empty or 'clock_in' not in si_punches.columns:
+                st.info("No shift data recorded yet.")
+            else:
+                # Only completed shifts have real numbers to analyze
+                si_punches = si_punches[si_punches['clock_out'].notna() & (si_punches['clock_out'].astype(str).str.strip() != "")].copy()
+
+                if si_punches.empty:
+                    st.info("No completed shifts yet.")
+                else:
+                    si_punches['dt'] = pd.to_datetime(si_punches['clock_in'], errors='coerce')
+                    si_punches['date_str'] = si_punches['dt'].dt.strftime('%Y-%m-%d')
+                    si_punches['month_year'] = si_punches['dt'].dt.strftime('%B %Y')
+                    si_punches['week_str'] = si_punches['dt'].dt.strftime('%Y-W%U')
+                    si_punches['weekday'] = si_punches['dt'].dt.day_name()
+                    si_punches['cash_in_f'] = si_punches['cash_in'].apply(safe_float)
+                    si_punches['cash_out_f'] = si_punches['cash_out'].apply(safe_float)
+                    si_punches['bonus_f'] = si_punches['bonus'].apply(safe_float)
+                    si_punches['revenue_f'] = si_punches['cash_in_f'] - si_punches['cash_out_f'] - (1.0 / 6.0) * si_punches['bonus_f']
+
+                    emp_name_map_si = {}
+                    if not si_emps.empty and 'emp_id' in si_emps.columns and 'name' in si_emps.columns:
+                        emp_name_map_si = dict(zip(si_emps['emp_id'].astype(str), si_emps['name']))
+                    si_punches['employee_name'] = si_punches['emp_id'].astype(str).map(emp_name_map_si).fillna(si_punches['emp_id'])
+
+                    # --- FILTERS ---
+                    si_c1, si_c2, si_c3 = st.columns(3)
+                    with si_c1:
+                        si_period = st.selectbox("Period", ["All-Time", "Monthly", "Weekly", "Daily"], key="si_period")
+                    with si_c2:
+                        si_shift_filter = st.selectbox("Shift", ["All Shifts"] + sorted(si_punches['shift_name'].dropna().unique().tolist()), key="si_shift_filter")
+                    with si_c3:
+                        si_emp_filter = st.selectbox("Employee", ["All Employees"] + sorted(si_punches['employee_name'].dropna().unique().tolist()), key="si_emp_filter")
+
+                    si_filtered = si_punches.copy()
+                    si_prev_period = pd.DataFrame()
+
+                    if si_period == "Monthly":
+                        si_months = sorted(si_punches['month_year'].dropna().unique().tolist(), reverse=True)
+                        si_sel_month = st.selectbox("Select Month", si_months if si_months else [nepal_now().strftime('%B %Y')], key="si_sel_month")
+                        si_filtered = si_punches[si_punches['month_year'] == si_sel_month]
+                        try:
+                            si_month_dt = datetime.strptime(si_sel_month, '%B %Y')
+                            si_prev_month_str = (si_month_dt - timedelta(days=28)).strftime('%B %Y')
+                            si_prev_period = si_punches[si_punches['month_year'] == si_prev_month_str]
+                        except Exception:
+                            pass
+                    elif si_period == "Weekly":
+                        si_weeks = sorted(si_punches['week_str'].dropna().unique().tolist(), reverse=True)
+                        si_sel_week = st.selectbox("Select Week", si_weeks if si_weeks else [nepal_now().strftime('%Y-W%U')], key="si_sel_week")
+                        si_filtered = si_punches[si_punches['week_str'] == si_sel_week]
+                        si_week_idx = si_weeks.index(si_sel_week) if si_sel_week in si_weeks else -1
+                        if 0 <= si_week_idx + 1 < len(si_weeks):
+                            si_prev_period = si_punches[si_punches['week_str'] == si_weeks[si_week_idx + 1]]
+                    elif si_period == "Daily":
+                        si_dates = sorted(si_punches['date_str'].dropna().unique().tolist(), reverse=True)
+                        si_sel_date = st.selectbox("Select Date", si_dates if si_dates else [str(nepal_today())], key="si_sel_date")
+                        si_filtered = si_punches[si_punches['date_str'] == si_sel_date]
+                        si_date_idx = si_dates.index(si_sel_date) if si_sel_date in si_dates else -1
+                        if 0 <= si_date_idx + 1 < len(si_dates):
+                            si_prev_period = si_punches[si_punches['date_str'] == si_dates[si_date_idx + 1]]
+
+                    if si_shift_filter != "All Shifts":
+                        si_filtered = si_filtered[si_filtered['shift_name'] == si_shift_filter]
+                        if not si_prev_period.empty:
+                            si_prev_period = si_prev_period[si_prev_period['shift_name'] == si_shift_filter]
+                    if si_emp_filter != "All Employees":
+                        si_filtered = si_filtered[si_filtered['employee_name'] == si_emp_filter]
+                        if not si_prev_period.empty:
+                            si_prev_period = si_prev_period[si_prev_period['employee_name'] == si_emp_filter]
+
+                    st.divider()
+
+                    # --- KPI ROW (with vs-previous-period deltas where available) ---
+                    def kpi_delta(current, previous):
+                        if si_period == "All-Time" or previous is None or previous == 0:
+                            return None
+                        pct = ((current - previous) / abs(previous)) * 100
+                        return f"{pct:+.1f}% vs previous"
+
+                    total_cash_in = si_filtered['cash_in_f'].sum()
+                    total_cash_out = si_filtered['cash_out_f'].sum()
+                    total_bonus = si_filtered['bonus_f'].sum()
+                    total_revenue = si_filtered['revenue_f'].sum()
+                    total_shifts = len(si_filtered)
+                    avg_cash_in = total_cash_in / total_shifts if total_shifts > 0 else 0.0
+
+                    prev_cash_in = si_prev_period['cash_in_f'].sum() if not si_prev_period.empty else None
+                    prev_revenue = si_prev_period['revenue_f'].sum() if not si_prev_period.empty else None
+
+                    kr1c1, kr1c2, kr1c3 = st.columns(3)
+                    kr1c1.metric("Cash In", f"${total_cash_in:,.2f}", kpi_delta(total_cash_in, prev_cash_in))
+                    kr1c2.metric("Cash Out", f"${total_cash_out:,.2f}")
+                    kr1c3.metric("Net Revenue", f"${total_revenue:,.2f}", kpi_delta(total_revenue, prev_revenue))
+
+                    kr2c1, kr2c2, kr2c3 = st.columns(3)
+                    kr2c1.metric("Bonus / Tips", f"${total_bonus:,.2f}")
+                    kr2c2.metric("Shifts", f"{total_shifts}")
+                    kr2c3.metric("Avg Cash In / Shift", f"${avg_cash_in:,.2f}")
+
+                    st.divider()
+
+                    # --- PERIOD-OVER-PERIOD COMPARISON CHART ---
+                    st.markdown("#### Revenue: This Period vs Previous Period")
+
+                    if si_period not in ["Weekly", "Monthly"]:
+                        st.info("Switch the Period filter above to Weekly or Monthly to compare revenue against the previous period.")
+                    elif si_filtered.empty or si_prev_period.empty:
+                        st.info("Not enough data in the previous period to compare yet.")
+                    else:
+                        curr_daily = si_filtered.groupby('date_str')['revenue_f'].sum().reset_index().sort_values('date_str')
+                        prev_daily = si_prev_period.groupby('date_str')['revenue_f'].sum().reset_index().sort_values('date_str')
+                        curr_daily['day_index'] = range(1, len(curr_daily) + 1)
+                        prev_daily['day_index'] = range(1, len(prev_daily) + 1)
+
+                        compare_df = pd.concat([
+                            curr_daily.assign(Period="This Week" if si_period == "Weekly" else "This Month"),
+                            prev_daily.assign(Period="Last Week" if si_period == "Weekly" else "Last Month")
+                        ])
+
+                        fig_compare = px.line(compare_df, x='day_index', y='revenue_f', color='Period',
+                                               labels={'day_index': 'Day', 'revenue_f': 'Revenue'})
+                        fig_compare.update_yaxes(title=None)
+                        st.plotly_chart(fig_compare, use_container_width=True)
+
+                    st.divider()
+
+                    # --- SHIFT-TYPE BREAKDOWN & DAY-OF-WEEK PATTERN ---
+                    si_col_a, si_col_b = st.columns(2)
+
+                    with si_col_a:
+                        st.markdown("#### By Shift Type")
+                        shift_breakdown = si_filtered.groupby('shift_name').agg(
+                            total_cash_in=('cash_in_f', 'sum'),
+                            shifts=('punch_id', 'count')
+                        ).reset_index()
+                        shift_breakdown['avg_per_shift'] = shift_breakdown['total_cash_in'] / shift_breakdown['shifts']
+                        shift_breakdown['short_label'] = shift_breakdown['shift_name'].str.extract(r'(Morning|Evening|Night)').fillna(shift_breakdown['shift_name']) + " Shift"
+                        if not shift_breakdown.empty:
+                            fig_shift = px.bar(shift_breakdown, x='short_label', y='total_cash_in',
+                                                labels={'short_label': ''},
+                                                text_auto='.2s')
+                            fig_shift.update_yaxes(visible=False, showticklabels=False, title=None)
+                            st.plotly_chart(fig_shift, use_container_width=True)
+                        else:
+                            st.info("No data.")
+
+                    with si_col_b:
+                        st.markdown("#### By Day of Week")
+                        weekday_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                        weekday_breakdown = si_filtered.groupby('weekday')['cash_in_f'].sum().reindex(weekday_order).fillna(0).reset_index()
+                        weekday_breakdown.columns = ['weekday', 'total_cash_in']
+                        if weekday_breakdown['total_cash_in'].sum() > 0:
+                            fig_weekday = px.bar(weekday_breakdown, x='weekday', y='total_cash_in',
+                                                  labels={'weekday': ''},
+                                                  text_auto='.2s')
+                            fig_weekday.update_yaxes(visible=False, showticklabels=False, title=None)
+                            st.plotly_chart(fig_weekday, use_container_width=True)
+                        else:
+                            st.info("No data.")
+
+                    st.divider()
+
+                    # --- EMPLOYEE PERFORMANCE ---
+                    st.markdown("#### Employee Performance")
+                    if not si_filtered.empty:
+                        emp_perf = si_filtered.groupby('employee_name').agg(
+                            total_cash_in=('cash_in_f', 'sum'),
+                            total_hours=('total_hours', lambda x: x.apply(safe_float).sum()),
+                            total_bonus=('bonus_f', 'sum')
+                        ).reset_index()
+                        emp_perf['cash_in_per_hour'] = emp_perf.apply(
+                            lambda r: r['total_cash_in'] / r['total_hours'] if r['total_hours'] > 0 else 0, axis=1
+                        )
+                        emp_perf_display = emp_perf.copy()
+                        emp_perf_display['total_cash_in'] = emp_perf_display['total_cash_in'].apply(lambda x: f"${x:,.2f}")
+                        emp_perf_display['total_hours'] = emp_perf_display['total_hours'].apply(lambda x: f"{x:.1f} hrs")
+                        emp_perf_display['cash_in_per_hour'] = emp_perf_display['cash_in_per_hour'].apply(lambda x: f"${x:,.2f}/hr")
+                        emp_perf_display['total_bonus'] = emp_perf_display['total_bonus'].apply(lambda x: f"${x:,.2f}")
+                        emp_perf_display.columns = ['Employee', 'Cash In', 'Hours', 'Bonus', 'Cash In / Hour']
+                        st.dataframe(emp_perf_display[['Employee', 'Cash In', 'Hours', 'Cash In / Hour', 'Bonus']], use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No data.")
+
+                    st.divider()
+
+                    # --- DATA QUALITY FLAGS ---
+                    st.markdown("#### ⚠️ Shifts Worth Double-Checking")
+                    flagged = si_filtered[si_filtered['cash_out_f'] > si_filtered['cash_in_f']]
+                    if flagged.empty:
+                        st.success("No shifts in this period had Cash Out exceeding Cash In.")
+                    else:
+                        st.warning(f"{len(flagged)} shift(s) had Cash Out greater than Cash In — worth a quick look.")
+                        flagged_display = flagged[['employee_name', 'shift_name', 'date_str', 'cash_in_f', 'cash_out_f']].copy()
+                        flagged_display.columns = ['Employee', 'Shift', 'Date', 'Cash In', 'Cash Out']
+                        st.dataframe(flagged_display, use_container_width=True, hide_index=True)
+
+        with mgr_tab4:
             st.markdown("### ⏱️ Time Punches & Reports")
             
             punches_df = get_as_df("time_punches")
@@ -878,7 +1084,7 @@ elif role == "Manager":
                     avail_cols = [c for c in display_columns if c in filtered_table_df.columns]
                     st.dataframe(filtered_table_df[avail_cols], use_container_width=True)
 
-        with mgr_tab4:
+        with mgr_tab5:
             st.markdown("### Expenses Management")
             
             EXCHANGE_RATE = 133.0
@@ -968,7 +1174,7 @@ elif role == "Manager":
                     hrs = safe_float(row.get('total_hours', 0))
                     rate = rate_map.get(e_id, 170.0)
                     sal_exp_npr += hrs * rate
-            salary_expense_usd = sal_exp_npr / EXCHANGE_RATE
+            salary_exp_usd = sal_exp_npr / EXCHANGE_RATE
 
             if not filtered_exp_df.empty and 'amount' in filtered_exp_df.columns:
                 for _, row in filtered_exp_df.iterrows():
@@ -1062,7 +1268,7 @@ elif role == "Manager":
             else:
                 st.dataframe(filtered_exp_df, use_container_width=True)
 
-        with mgr_tab5:
+        with mgr_tab6:
             st.markdown("### ⚙️ Settings")
 
             st.markdown("#### 🔑 Change Manager Password")
