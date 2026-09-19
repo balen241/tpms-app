@@ -119,7 +119,8 @@ def verify_sheet_structure():
         "expenses": ["expense_id", "expense_date", "category", "vendor", "amount", "notes"],
         "settings": ["key", "value"],
         "shift_transactions": ["txn_id", "punch_id", "emp_id", "amount", "timestamp"],
-        "active_sessions": ["session_token", "emp_id", "last_activity"]
+        "active_sessions": ["session_token", "emp_id", "last_activity"],
+        "platform_links": ["link_id", "platform_name", "customer_link", "personal_backend_link"]
     }
     
     try:
@@ -340,7 +341,7 @@ if role == "Employee":
             
             st.divider()
 
-            emp_tab1, emp_tab2 = st.tabs(["⏱️ Timeclock", "📊 History"])
+            emp_tab1, emp_tab2, emp_tab3 = st.tabs(["⏱️ Timeclock", "📊 History", "🔗 Platform Links"])
 
             with emp_tab1:
                 punches_df = get_as_df("time_punches")
@@ -551,6 +552,24 @@ if role == "Employee":
                         styled_df = filtered_df[available_display_cols].style.apply(highlight_table, axis=None)
                         st.dataframe(styled_df, use_container_width=True)
 
+            with emp_tab3:
+                st.markdown("### 🔗 Platform Links")
+                links_df_emp = get_as_df("platform_links")
+
+                if links_df_emp.empty:
+                    st.info("No platform links have been set up yet.")
+                else:
+                    for _, link_row in links_df_emp.iterrows():
+                        st.markdown(f"#### {link_row.get('platform_name', 'Untitled')}")
+                        lc1, lc2 = st.columns(2)
+                        with lc1:
+                            st.caption("Customer Link")
+                            st.code(str(link_row.get('customer_link', '')), language=None)
+                        with lc2:
+                            st.caption("Personal Backend Link")
+                            st.code(str(link_row.get('personal_backend_link', '')), language=None)
+                        st.divider()
+
 elif role == "Manager":
     st.subheader("Manager Portal")
     
@@ -579,7 +598,7 @@ elif role == "Manager":
         
         st.divider()
         
-        mgr_tab1, mgr_tab2, mgr_tab3, mgr_tab4, mgr_tab5, mgr_tab6 = st.tabs(["👥 Employees & Shifts", "💰 Financial Dashboard", "📈 Sales Insights", "⏱️ Time Punches", "📊 Expenses", "⚙️ Settings"])
+        mgr_tab1, mgr_tab2, mgr_tab3, mgr_tab4, mgr_tab5, mgr_tab6, mgr_tab7 = st.tabs(["👥 Employees & Shifts", "💰 Financial Dashboard", "📈 Sales Insights", "⏱️ Time Punches", "📊 Expenses", "⚙️ Settings", "🔗 Platform Links"])
         
         with mgr_tab1:
             st.markdown("### Employee & Shift Time Slot Management")
@@ -1372,3 +1391,63 @@ elif role == "Manager":
                             execute_query("employees", "update", row_id=emp_row['emp_id'], update_dict={"pin": new_pin})
                             st.success(f"PIN updated for {sel_emp_for_pin}!")
                             st.rerun()
+
+        with mgr_tab7:
+            st.markdown("### 🔗 Platform Links")
+            st.caption("Manage the platform links employees can view and copy. Employees can only view and copy these — editing happens here.")
+
+            st.markdown("#### Add New Platform Link")
+            with st.form("add_platform_link_form"):
+                new_platform_name = st.text_input("Platform Name")
+                new_customer_link = st.text_input("Customer Link")
+                new_backend_link = st.text_input("Personal Backend Link")
+                add_link_submit = st.form_submit_button("➕ Add Link", type="primary")
+
+                if add_link_submit:
+                    if not new_platform_name or not new_customer_link:
+                        st.error("Platform Name and Customer Link are required.")
+                    else:
+                        link_id = f"L_{int(nepal_now().timestamp())}"
+                        execute_query("platform_links", "insert", data_row=[link_id, new_platform_name, new_customer_link, new_backend_link])
+                        st.success(f"Added '{new_platform_name}'.")
+                        st.rerun()
+
+            st.divider()
+            st.markdown("#### Existing Links")
+
+            links_df_mgr = get_as_df("platform_links")
+            if links_df_mgr.empty:
+                st.info("No platform links added yet.")
+            else:
+                links_df_mgr = links_df_mgr.copy()
+                links_df_mgr['Delete?'] = False
+                edit_cols_links = ['link_id', 'platform_name', 'customer_link', 'personal_backend_link', 'Delete?']
+                avail_link_cols = [c for c in edit_cols_links if c in links_df_mgr.columns]
+
+                edited_links = st.data_editor(
+                    links_df_mgr[avail_link_cols],
+                    key="platform_links_editor",
+                    use_container_width=True,
+                    hide_index=True,
+                    disabled=['link_id']
+                )
+
+                if st.button("💾 Save Changes", type="primary", key="save_platform_links"):
+                    ids_to_delete = []
+                    for _, row in edited_links.iterrows():
+                        if row.get('Delete?', False):
+                            ids_to_delete.append(row['link_id'])
+                        else:
+                            execute_query(
+                                "platform_links", "update", row_id=row['link_id'],
+                                update_dict={
+                                    "platform_name": row['platform_name'],
+                                    "customer_link": row['customer_link'],
+                                    "personal_backend_link": row['personal_backend_link']
+                                }
+                            )
+                    for link_id in ids_to_delete:
+                        delete_matching_rows("platform_links", "link_id", link_id)
+
+                    st.success("Changes saved.")
+                    st.rerun()
