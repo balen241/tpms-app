@@ -559,16 +559,17 @@ if role == "Employee":
                 if links_df_emp.empty:
                     st.info("No platform links have been set up yet.")
                 else:
-                    for _, link_row in links_df_emp.iterrows():
-                        st.markdown(f"#### {link_row.get('platform_name', 'Untitled')}")
-                        lc1, lc2 = st.columns(2)
-                        with lc1:
-                            st.caption("Customer Link")
-                            st.code(str(link_row.get('customer_link', '')), language=None)
-                        with lc2:
-                            st.caption("Personal Backend Link")
-                            st.code(str(link_row.get('personal_backend_link', '')), language=None)
-                        st.divider()
+                    platform_names = links_df_emp['platform_name'].dropna().tolist()
+                    selected_platform = st.selectbox("Select Platform", platform_names, key="emp_platform_select")
+                    selected_link_row = links_df_emp[links_df_emp['platform_name'] == selected_platform].iloc[0]
+
+                    lc1, lc2 = st.columns(2)
+                    with lc1:
+                        st.caption("Customer Link")
+                        st.code(str(selected_link_row.get('customer_link', '')), language=None)
+                    with lc2:
+                        st.caption("Personal Backend Link")
+                        st.code(str(selected_link_row.get('personal_backend_link', '')), language=None)
 
 elif role == "Manager":
     st.subheader("Manager Portal")
